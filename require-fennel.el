@@ -33,7 +33,8 @@
 
 ;;; Code:
 
-(require 'fennel-proto-repl)
+(declare-function fennel-proto-repl "ext:fennel-proto-repl")
+(declare-function fennel-proto-repl-send-message-sync "ext:fennel-proto-repl")
 
 (defun require-fennel--fennel-to-elisp (value &optional as-hash-table skip)
   "Convert Fennel VALUE into Emacs Lisp value.

@@ -1,0 +1,4 @@
+/require-fennel-autoloads.el
+/require-fennel-pkg.el
+/require-fennel.elc
+/test/require-fennel-test.elc
