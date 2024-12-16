@@ -228,6 +228,18 @@ If it is, return all values as a list, otherwise return only the first value."
          _ (fennel.view t {:one-line? true}))))"
   "Format Fennel tables as elisp data on Fennel side.")
 
+(defun require-fennel--setup-paths (directory)
+  "Setup PATH environment for Fennel based on current DIRECTORY."
+  (dolist (path `(("fennel" "path" ,(expand-file-name "?.fnl" directory))
+                  ("fennel" "path" ,(expand-file-name "?/init.fnl" directory))
+                  ("fennel" "macro-path" ,(expand-file-name "?.fnl" directory))
+                  ("fennel" "macro-path" ,(expand-file-name "?/init.fnl" directory))
+                  ("package" "path" ,(expand-file-name "?.lua" directory))
+                  ("package" "path" ,(expand-file-name "?/init.lua" directory))))
+    (seq-let (var field path) path
+      (fennel-proto-repl-send-message-sync
+       :eval (format "(tset %s %S (.. %s.%s \";\" %S))" var field var field path)))))
+
 ;;;###autoload
 (cl-defmacro require-fennel (module &key as (separator ".") use-hash-tables)
   "Require a Fennel MODULE as a set of Emacs Lisp definitions.
@@ -239,7 +251,8 @@ instead of alists."
   (let ((as (if as (format "%s" as)
               (replace-regexp-in-string "[.]" "-" (format "%s" module))))
         (var (gensym "fennel-elisp-"))
-        (b (get-buffer-create " *fennel-elisp*")))
+        (b (get-buffer-create " *fennel-elisp*"))
+        (directory default-directory))
     `(progn
        ,(with-current-buffer b
           (unless (and (eq major-mode 'fennel-proto-repl-mode)
@@ -249,6 +262,7 @@ instead of alists."
               (rename-buffer " *fennel-elisp*")))
           (fennel-proto-repl-send-message-sync
            :eval "(local fennel (require :fennel))")
+          (require-fennel--setup-paths directory)
           (fennel-proto-repl-send-message-sync
            :eval require-fennel--pprint)
           (fennel-proto-repl-send-message-sync
