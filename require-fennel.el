@@ -35,6 +35,7 @@
 
 (declare-function fennel-proto-repl "ext:fennel-proto-repl")
 (declare-function fennel-proto-repl-send-message-sync "ext:fennel-proto-repl")
+(defvar fennel-proto-repl-sync-timeout)
 
 (defun require-fennel--fennel-to-elisp (value &optional as-hash-table skip)
   "Convert Fennel VALUE into Emacs Lisp value.
@@ -254,59 +255,60 @@ instead of alists."
         (b (get-buffer-create " *fennel-elisp*"))
         (directory default-directory))
     `(progn
-       ,(with-current-buffer b
-          (unless (and (eq major-mode 'fennel-proto-repl-mode)
-                       (process-live-p (get-buffer-process b)))
-            (save-window-excursion
-              (fennel-proto-repl (or fennel-program "fennel") b)
-              (rename-buffer " *fennel-elisp*")))
-          (fennel-proto-repl-send-message-sync
-           :eval "(local fennel (require :fennel))")
-          (require-fennel--setup-paths directory)
-          (fennel-proto-repl-send-message-sync
-           :eval require-fennel--pprint)
-          (fennel-proto-repl-send-message-sync
-           :eval (format "(var %s (require :%s))" var module))
-          (let ((module (require-fennel--module-definitions var)))
-            (thread-last
-              module
-              (mapcar
-               (lambda (value)
-                 (pcase value
-                   (`["var" ,field]
-                    `(defconst ,(intern (format "%s%s%s" as separator field))
-                       (with-current-buffer ,(buffer-name b)
-                         (require-fennel--fennel-to-elisp
-                          (thread-last
-                            ,(format "%s.%s" var field)
-                            (fennel-proto-repl-send-message-sync :eval)
-                            car)
-                          ,use-hash-tables))))
-                   (`["function" ,fn]
-                    (let ((docstring (require-fennel--fn-docstring var fn))
-                          (arglist (require-fennel--fn-arglist var fn))
-                          (error-var (gensym "err")))
-                      `(defun ,(intern (format "%s%s%s" as separator fn)) (&rest unknown-arguments)
-                         ,(or docstring "undocumented")
-                         ,(when arglist
-                            `(declare (advertised-calling-convention ,arglist "")))
+       ,(let ((fennel-proto-repl-sync-timeout 1))
+          (with-current-buffer b
+            (unless (and (eq major-mode 'fennel-proto-repl-mode)
+                         (process-live-p (get-buffer-process b)))
+              (save-window-excursion
+                (fennel-proto-repl (or fennel-program "fennel") b)
+                (rename-buffer " *fennel-elisp*")))
+            (fennel-proto-repl-send-message-sync
+             :eval "(local fennel (require :fennel))")
+            (require-fennel--setup-paths directory)
+            (fennel-proto-repl-send-message-sync
+             :eval require-fennel--pprint)
+            (fennel-proto-repl-send-message-sync
+             :eval (format "(var %s (require :%s))" var module))
+            (let ((module (require-fennel--module-definitions var)))
+              (thread-last
+                module
+                (mapcar
+                 (lambda (value)
+                   (pcase value
+                     (`["var" ,field]
+                      `(defconst ,(intern (format "%s%s%s" as separator field))
                          (with-current-buffer ,(buffer-name b)
-                           (let* (,error-var
-                                  (values
-                                   (fennel-proto-repl-send-message-sync
-                                    :eval
-                                    (format ,(format "(%s.%s %%s)" var fn)
-                                            (mapconcat #'require-fennel--elisp-to-fennel unknown-arguments " "))
-                                    (lambda (err-type msg trace)
-                                      (setq ,error-var (if trace (format "%s\n%s" msg trace) msg)))
-                                    (lambda (data)
-                                      (message "%s" data)))))
-                             (if ,error-var (error ,error-var)
-                               (thread-last
-                                 values
-                                 (mapcar (lambda (value) (require-fennel--fennel-to-elisp value ,use-hash-tables)))
-                                 require-fennel--handle-multivalue-return))))))))))
-              (cons 'progn)))))))
+                           (require-fennel--fennel-to-elisp
+                            (thread-last
+                              ,(format "%s.%s" var field)
+                              (fennel-proto-repl-send-message-sync :eval)
+                              car)
+                            ,use-hash-tables))))
+                     (`["function" ,fn]
+                      (let ((docstring (require-fennel--fn-docstring var fn))
+                            (arglist (require-fennel--fn-arglist var fn))
+                            (error-var (gensym "err")))
+                        `(defun ,(intern (format "%s%s%s" as separator fn)) (&rest unknown-arguments)
+                           ,(or docstring "undocumented")
+                           ,(when arglist
+                              `(declare (advertised-calling-convention ,arglist "")))
+                           (with-current-buffer ,(buffer-name b)
+                             (let* (,error-var
+                                    (values
+                                     (fennel-proto-repl-send-message-sync
+                                      :eval
+                                      (format ,(format "(%s.%s %%s)" var fn)
+                                              (mapconcat #'require-fennel--elisp-to-fennel unknown-arguments " "))
+                                      (lambda (err-type msg trace)
+                                        (setq ,error-var (if trace (format "%s\n%s" msg trace) msg)))
+                                      (lambda (data)
+                                        (message "%s" data)))))
+                               (if ,error-var (error ,error-var)
+                                 (thread-last
+                                   values
+                                   (mapcar (lambda (value) (require-fennel--fennel-to-elisp value ,use-hash-tables)))
+                                   require-fennel--handle-multivalue-return))))))))))
+                (cons 'progn))))))))
 
 (provide 'require-fennel)
 ;;; require-fennel.el ends here
