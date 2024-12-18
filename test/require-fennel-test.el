@@ -82,7 +82,7 @@
   (should (simple.identity '((:a . 1) (:b . 1) (:c . 1) (:d . 4)))))
 
 (ert-deftest data-conversion-receive-test ()
-  (require-fennel data.simple :as simple)
+  (defvar ns (require-fennel data.simple :as simple))
   (should (equal 4 simple.four))
   (should simple.true)
   (should-not simple.false)
@@ -90,5 +90,13 @@
   (should (equal ["foo" 1] simple.plain-vector)))
 
 (ert-deftest loading-single-function-test ()
+  (require-fennel data.function)
+  (should (string= "anon" (data-function)))
   (require-fennel data.function :as f)
-  (should (string= "anon" (f.fn))))
+  (should (string= "anon" (f))))
+
+(ert-deftest loading-single-value-test ()
+  (require-fennel data.value)
+  (should (equal 42 data-value))
+  (require-fennel data.value :as v)
+  (should (equal 42 v)))
