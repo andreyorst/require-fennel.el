@@ -4,7 +4,7 @@
 
 ;; Author: Andrey Listopadov
 ;; URL: https://gitlab.com/andreyorst/require-fennel.el
-;; Version: 0.0.1
+;; Version: 0.0.2
 ;; Created: 2024-12-16
 ;; package-requires: ((emacs "28.1"))
 ;; Keywords: languages, tools
@@ -35,10 +35,43 @@
 
 (declare-function fennel-proto-repl "ext:fennel-proto-repl")
 (declare-function fennel-proto-repl-send-message-sync "ext:fennel-proto-repl")
-(defvar fennel-proto-repl-sync-timeout)
 
-(defconst fennel-require--repl-buffer " *fennel-elisp*"
+(defconst require-fennel--repl-buffer " *fennel-elisp*"
   "A buffer name used to create the internal REPL process.")
+
+(defgroup require-fennel nil
+  "Custom settings for `require-fennel' macro."
+  :prefix "require-fennel-"
+  :group nil)
+
+(defcustom require-fennel-fennel-program "fennel"
+  "Path to the fennel executable."
+  :group 'require-fennel
+  :type 'string
+  :package-version '(require-fennel "0.0.2"))
+
+(defcustom require-fennel-timeout nil
+  "Timeout in seconds for each command."
+  :group 'require-fennel
+  :type '(choice
+	  (const :tag "Infinite timeout" nil)
+	  (integer :tag "seconds"))
+  :package-version '(require-fennel "0.0.2"))
+
+(defcustom require-fennel-use-hash-tables nil
+  "Default hash table format for features provided by `require-fennel'.
+
+The default behavior is to use alists, which means that any Fennel hash
+table will be converted to association list when returned to Emacs Lisp
+side.  If you prefer using native hash tables, set this variable to t.
+
+This setting can still be overidden with the `:use-hash-tables' keyword
+argument of `require-fennel' macro."
+  :group 'require-fennel
+  :type '(choice
+	  (const :tag "use alists" nil)
+	  (const :tag "use native hash tables" t))
+  :package-version '(require-fennel "0.0.2"))
 
 (defun require-fennel--fennel-to-elisp (value &optional as-hash-table skip)
   "Convert Fennel VALUE into Emacs Lisp value.
@@ -141,12 +174,21 @@ skip parsing the argument from Fennel to Emacs Lisp."
       ((pred stringp) (intern arg))
       (arg arg))))
 
+(defun require-fennel--eval (fmt &rest args)
+  "Send code to the Fennel process.
+FMT is a format string, used with ARGS."
+  (fennel-proto-repl-send-message-sync
+   :eval
+   (apply #'format fmt args)
+   nil
+   nil
+   (or require-fennel-timeout most-positive-fixnum)))
+
 (defun require-fennel--fn-arglist (var fn)
   "Obtain arglist from Fennel function FN stored in VAR."
   (seq-let (arglist)
-      (fennel-proto-repl-send-message-sync
-       :eval
-       (format "(fennel.metadata:get %s.%s :fnl/arglist)" var fn))
+      (require-fennel--eval
+       "(fennel.metadata:get %s.%s :fnl/arglist)" var fn)
     (let ((rest (gensym "rest")))
       (when (and arglist (not (string= arglist "[]")))
         (let ((arglist (thread-last
@@ -164,9 +206,7 @@ skip parsing the argument from Fennel to Emacs Lisp."
 (defun require-fennel--fn-docstring (var fn)
   "Obtain docstring from Fennel function FN stored in VAR."
   (seq-let (docstring)
-      (fennel-proto-repl-send-message-sync
-       :eval
-       (format "(fennel.metadata:get %s.%s :fnl/docstring)" var fn))
+      (require-fennel--eval "(fennel.metadata:get %s.%s :fnl/docstring)" var fn)
     (when docstring
       (require-fennel--fennel-to-elisp docstring))))
 
@@ -182,14 +222,15 @@ skip parsing the argument from Fennel to Emacs Lisp."
          (set ,var { ":value" ,var })
          [[vartype ":value"]]))
     (format "%s")
-    (fennel-proto-repl-send-message-sync :eval)
+    (require-fennel--eval)
     car
     read-from-string
     car))
 
 (defun require-fennel--handle-multivalue-return (values)
-  "When fennel returns multiple VALUES, check if its more than one.
-If it is, return all values as a list, otherwise return only the first value."
+  "When multiple VALUES are returned from Fe, check if its more than one.
+If it is, return all values as a list, otherwise return only the first
+value."
   (if (length= values 1)
       (car values)
     values))
@@ -242,8 +283,8 @@ If it is, return all values as a list, otherwise return only the first value."
                   ("package" "path" ,(expand-file-name "?.lua" directory))
                   ("package" "path" ,(expand-file-name "?/init.lua" directory))))
     (seq-let (var field path) path
-      (fennel-proto-repl-send-message-sync
-       :eval (format "(tset %s %S (.. %s.%s \";\" %S))" var field var field path)))))
+      (require-fennel--eval
+       "(tset %s %S (.. %s.%s \";\" %S))" var field var field path))))
 
 (defun require-fennel--define-const (field-type field as var separator use-hash-tables)
   "Generate `defconst' definition for FIELD.
@@ -257,16 +298,16 @@ USE-HASH-TABLES."
                 ("val" (intern (format "%s%s%s" as separator field)))
                 ("sole-val" (intern (format "%s" as))))))
     `(defconst ,name
-       (with-current-buffer ,fennel-require--repl-buffer
+       (with-current-buffer ,require-fennel--repl-buffer
          (require-fennel--fennel-to-elisp
           (thread-last
             ,(format "%s.%s" var field)
-            (fennel-proto-repl-send-message-sync :eval)
+            require-fennel--eval
             car)
           ,use-hash-tables)))))
 
 (cl-defun require-fennel--define-fun (fn-type fn as var separator use-hash-tables)
-  "Generate `defun' definition.
+  "Generate `defun' definition for Fennel FN.
 If FN-TYPE is a string function, the nested definition is created using
 SEPARATOR.  Otherwise, if the string is sole-function, AS is used as
 definition.
@@ -283,7 +324,7 @@ USE-HASH-TABLES."
        ,(or docstring "undocumented")
        ,(when arglist
           `(declare (advertised-calling-convention ,arglist "")))
-       (with-current-buffer ,fennel-require--repl-buffer
+       (with-current-buffer ,require-fennel--repl-buffer
          (let* (,error-var
                 (values
                  (fennel-proto-repl-send-message-sync
@@ -293,7 +334,8 @@ USE-HASH-TABLES."
                   (lambda (err-type msg trace)
                     (setq ,error-var (if trace (format "%s\n%s" msg trace) msg)))
                   (lambda (data)
-                    (message "%s" data)))))
+                    (message "%s" data))
+                  (or require-fennel-timeout most-positive-fixnum))))
            (if ,error-var (error ,error-var)
              (thread-last
                values
@@ -319,7 +361,7 @@ should be converted to ELisp-native hash tables."
         as var separator use-hash-tables)))))
 
 ;;;###autoload
-(cl-defmacro require-fennel (module &key as (separator ".") use-hash-tables)
+(cl-defmacro require-fennel (module &key as (separator ".") (use-hash-tables require-fennel-use-hash-tables))
   "Require a Fennel MODULE as a set of Emacs Lisp definitions.
 Keyword argument AS specifies how to prefix each definition.  Keyword
 argument SEPARATOR specifies what character to use as a separator
@@ -332,25 +374,23 @@ instead of alists."
 
         (directory default-directory))
     `(prog1 ',(intern as)
-       ,@(let ((fennel-proto-repl-sync-timeout 10))
-           (with-current-buffer (get-buffer-create fennel-require--repl-buffer)
-             (unless (and (eq major-mode 'fennel-proto-repl-mode)
-                          (process-live-p (get-buffer-process (current-buffer))))
-               (save-window-excursion
-                 (fennel-proto-repl (or fennel-program "fennel") (current-buffer))
-                 (rename-buffer " *fennel-elisp*")))
-             (fennel-proto-repl-send-message-sync
-              :eval "(local fennel (require :fennel))")
-             (require-fennel--setup-paths directory)
-             (fennel-proto-repl-send-message-sync
-              :eval require-fennel--pprint)
-             (fennel-proto-repl-send-message-sync
-              :eval (format "(var %s (require :%s))" var module))
-             (thread-last
-               var
-               require-fennel--module-definitions
-               (mapcar (lambda (value)
-                         (require-fennel--define value as var separator use-hash-tables)))))))))
+       ,@(with-current-buffer (get-buffer-create require-fennel--repl-buffer)
+           (unless (and (eq major-mode 'fennel-proto-repl-mode)
+                        (process-live-p (get-buffer-process (current-buffer))))
+             (save-window-excursion
+               (fennel-proto-repl require-fennel-fennel-program (current-buffer))
+               (set-process-query-on-exit-flag (get-buffer-process (current-buffer)) nil)
+               (set-process-query-on-exit-flag (get-buffer-process fennel-proto-repl--process-buffer) nil)
+               (rename-buffer " *fennel-elisp*")))
+           (require-fennel--eval "(local fennel (require :fennel))")
+           (require-fennel--setup-paths directory)
+           (require-fennel--eval "%s" require-fennel--pprint)
+           (require-fennel--eval "(var %s (require :%s))" var module)
+           (thread-last
+             var
+             require-fennel--module-definitions
+             (mapcar (lambda (value)
+                       (require-fennel--define value as var separator use-hash-tables))))))))
 
 (provide 'require-fennel)
 ;;; require-fennel.el ends here
