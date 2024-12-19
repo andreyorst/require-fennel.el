@@ -100,3 +100,9 @@
   (should (equal 42 data-value))
   (require-fennel data.value :as v)
   (should (equal 42 v)))
+
+(ert-deftest loading-single-emacs-test ()
+  (require-fennel data.emacs :as emacs)
+  (should (equal 6 (emacs.call)))
+  (should (equal 1337 (emacs.eval)))
+  (should (equal 42 (emacs.var))))

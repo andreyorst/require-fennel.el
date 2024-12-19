@@ -4,7 +4,7 @@
 
 ;; Author: Andrey Listopadov
 ;; URL: https://gitlab.com/andreyorst/require-fennel.el
-;; Version: 0.0.2
+;; Version: 0.0.3
 ;; Created: 2024-12-16
 ;; package-requires: ((emacs "28.1"))
 ;; Keywords: languages, tools
@@ -34,6 +34,7 @@
 ;;; Code:
 
 (declare-function fennel-proto-repl "ext:fennel-proto-repl")
+(declare-function fennel-proto-repl-send-message "ext:fennel-proto-repl")
 (declare-function fennel-proto-repl-send-message-sync "ext:fennel-proto-repl")
 
 (defconst require-fennel--repl-buffer " *fennel-elisp*"
@@ -44,7 +45,7 @@
   :prefix "require-fennel-"
   :group nil)
 
-(defcustom require-fennel-fennel-program "fennel"
+(defcustom require-fennel-fennel-program "fennel --globals emacs"
   "Path to the fennel executable."
   :group 'require-fennel
   :type 'string
@@ -360,6 +361,71 @@ should be converted to ELisp-native hash tables."
         type field
         as var separator use-hash-tables)))))
 
+(defvar require-fennel--emacs-integration
+  (thread-last
+    "(let [format-elisp _G.___repl___.pp]
+       (protocol.env-set!
+        :emacs {:call (->> {:__index
+                            (fn [_ k]
+                              (fn [...]
+                                (protocol.message
+                                 [[:id {:sym protocol.id}]
+                                  [:op {:string :require-fennel/call}]
+                                  [:fun {:sym k}]
+                                  [:arguments {:list (fcollect [n 1 (select \"#\" ...)]
+                                                  (format-elisp (pick-values 1 (select n ...))))}]])
+                                (. (protocol.receive) :data)))}
+                           (setmetatable {}))
+                :var (->> {:__index
+                           (fn [_ k]
+                             (protocol.message [[:id {:sym protocol.id}]
+                                                [:op {:string :require-fennel/var}]
+                                                [:var {:sym k}]])
+                             (. (protocol.receive) :data))}
+                          (setmetatable {}))
+                :eval (fn [expr]
+                        (protocol.message [[:id {:sym protocol.id}]
+                                           [:op {:string :require-fennel/eval}]
+                                           [:expr {:sym expr}]])
+                        (. (protocol.receive) :data))})
+       {:id 1000 :nop \"\"})"
+    (replace-regexp-in-string "^ *" "")
+    (replace-regexp-in-string "\n" " ")
+    (format "%s\n")))
+
+(cl-defmethod fennel-proto-repl-handle-custom-op ((op (eql :require-fennel/call)) message callbacks)
+  "Custom handler for the require-fennel/call OP.
+Accepts a MESSAGE and its CALLBACKS.
+The MESSAGE contains a function to evaluate and its arguments."
+  (fennel-proto-repl-send-message
+   nil
+   (format "{:id %s :data %s}"
+           (plist-get message :id)
+           (require-fennel--elisp-to-fennel (apply (plist-get message :fun) (plist-get message :arguments))))
+   nil))
+
+(cl-defmethod fennel-proto-repl-handle-custom-op ((op (eql :require-fennel/var)) message callbacks)
+  "Custom handler for the require-fennel/var OP.
+Accepts a MESSAGE and its CALLBACKS.
+The MESSAGE contains a var which value is then returned to Fennel."
+  (fennel-proto-repl-send-message
+   nil
+   (format "{:id %s :data %s}"
+           (plist-get message :id)
+           (require-fennel--elisp-to-fennel (eval (plist-get message :var))))
+   nil))
+
+(cl-defmethod fennel-proto-repl-handle-custom-op ((op (eql :require-fennel/eval)) message callbacks)
+  "Custom handler for the require-fennel/var OP.
+Accepts a MESSAGE and its CALLBACKS.
+The MESSAGE contains an expression which is evaluated and its result is returned to Fennel."
+  (fennel-proto-repl-send-message
+   nil
+   (format "{:id %s :data %s}"
+           (plist-get message :id)
+           (require-fennel--elisp-to-fennel (eval (plist-get message :expr))))
+   nil))
+
 ;;;###autoload
 (cl-defmacro require-fennel (module &key as (separator ".") (use-hash-tables require-fennel-use-hash-tables))
   "Require a Fennel MODULE as a set of Emacs Lisp definitions.
@@ -371,7 +437,6 @@ instead of alists."
   (let ((as (if as (format "%s" as)
               (replace-regexp-in-string "[.]" "-" (format "%s" module))))
         (var (gensym "fennel-elisp-"))
-
         (directory default-directory))
     `(prog1 ',(intern as)
        ,@(with-current-buffer (get-buffer-create require-fennel--repl-buffer)
@@ -385,6 +450,8 @@ instead of alists."
            (require-fennel--eval "(local fennel (require :fennel))")
            (require-fennel--setup-paths directory)
            (require-fennel--eval "%s" require-fennel--pprint)
+           (fennel-proto-repl-send-message
+            nil require-fennel--emacs-integration nil)
            (require-fennel--eval "(var %s (require :%s))" var module)
            (thread-last
              var
