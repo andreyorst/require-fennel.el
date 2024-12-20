@@ -393,6 +393,12 @@ should be converted to ELisp-native hash tables."
     (replace-regexp-in-string "\n" " ")
     (format "%s\n")))
 
+(defun require-fennel--replace-literal-newlines (data)
+  "Replace literal newlines in a STRING with escaped ones."
+  (if (stringp data)
+      (replace-regexp-in-string "\n" "\\\\n" data)
+    data))
+
 (cl-defmethod fennel-proto-repl-handle-custom-op ((op (eql :require-fennel/call)) message callbacks)
   "Custom handler for the require-fennel/call OP.
 Accepts a MESSAGE and its CALLBACKS.
@@ -401,7 +407,8 @@ The MESSAGE contains a function to evaluate and its arguments."
    nil
    (format "{:id %s :data %s}"
            (plist-get message :id)
-           (require-fennel--elisp-to-fennel (apply (plist-get message :fun) (plist-get message :arguments))))
+           (require-fennel--replace-literal-newlines
+            (require-fennel--elisp-to-fennel (apply (plist-get message :fun) (plist-get message :arguments)))))
    nil))
 
 (cl-defmethod fennel-proto-repl-handle-custom-op ((op (eql :require-fennel/var)) message callbacks)
@@ -412,7 +419,8 @@ The MESSAGE contains a var which value is then returned to Fennel."
    nil
    (format "{:id %s :data %s}"
            (plist-get message :id)
-           (require-fennel--elisp-to-fennel (eval (plist-get message :var))))
+           (require-fennel--replace-literal-newlines
+            (require-fennel--elisp-to-fennel (eval (plist-get message :var)))))
    nil))
 
 (cl-defmethod fennel-proto-repl-handle-custom-op ((op (eql :require-fennel/eval)) message callbacks)
@@ -423,7 +431,8 @@ The MESSAGE contains an expression which is evaluated and its result is returned
    nil
    (format "{:id %s :data %s}"
            (plist-get message :id)
-           (require-fennel--elisp-to-fennel (eval (plist-get message :expr))))
+           (require-fennel--replace-literal-newlines
+            (require-fennel--elisp-to-fennel (eval (plist-get message :expr)))))
    nil))
 
 ;;;###autoload
