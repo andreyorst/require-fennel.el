@@ -45,7 +45,7 @@
   :prefix "require-fennel-"
   :group nil)
 
-(defcustom require-fennel-fennel-program "fennel --globals emacs"
+(defcustom require-fennel-fennel-program "fennel --globals emacs,elisp-exports"
   "Path to the fennel executable."
   :group 'require-fennel
   :type 'string
@@ -103,6 +103,7 @@ be used as return values for Fennel hash tables."
                          results))
                  value)
                 results)))
+           (`(lambda . ,_) (eval value))
            ((or (pred vectorp) (pred listp))
             (thread-last
               value
@@ -238,41 +239,65 @@ value."
 
 (defvar require-fennel--pprint
   "(tset _G.___repl___ :pp
-     (fn pp [t]
-       (fn length* [t]
-         (let [mt (getmetatable t)]
-           (if (and (= :table mt) mt.__len)
-               (mt.__len t)
-               (length t))))
-       (fn pairs* [t]
-         (let [mt (getmetatable t)]
-           (if (and (= :table mt) mt.__pairs)
-               (mt.__pairs t)
-               (pairs t))))
-       (fn ipairs* [t]
-         (let [mt (getmetatable t)]
-           (if (and (= :table mt) mt.__ipairs)
-               (mt.__ipairs t)
-               (ipairs t))))
-       (match (type t)
-         :table
-         (let [len (length* t)
-               (nxt t* k) (pairs* t)]
-           (if (not= nil (nxt t* (if (= len 0) k len)))
-               (.. \"#s(hash-table test equal data (\"
-                   (table.concat
-                    (icollect [k v (pairs* t)]
-                      (string.format \"%s %s\" (pp k) (pp v)))
-                    \" \")
-                   \"))\")
-               (> len 0)
-               (.. \"[\"
-                   (table.concat (icollect [_ v (ipairs* t)] (pp v)) \" \")
-                   \"]\")
-               \"[]\"))
-         (where (or :function :userdata))
-         (fennel.view (fennel.view t {:one-line? true}) {:one-line? true})
-         _ (fennel.view t {:one-line? true}))))"
+     (fn pp [t keys]
+       (let [module \"%s\"]
+         (fn cons [t v]
+           (doto (collect [k v (pairs (or t []))] k v)
+             (table.insert v)))
+         (fn length* [t]
+           (let [mt (getmetatable t)]
+             (if (and (= :table mt) mt.__len)
+                 (mt.__len t)
+                 (length t))))
+         (fn pairs* [t]
+           (let [mt (getmetatable t)]
+             (if (and (= :table mt) mt.__pairs)
+                 (mt.__pairs t)
+                 (pairs t))))
+         (fn ipairs* [t]
+           (let [mt (getmetatable t)]
+             (if (and (= :table mt) mt.__ipairs)
+                 (mt.__ipairs t)
+                 (ipairs t))))
+         (match (type t)
+           :table
+           (let [len (length* t)
+                 (nxt t* k) (pairs* t)]
+             (if (not= nil (nxt t* (if (= len 0) k len)))
+                 (.. \"#s(hash-table test equal data (\"
+                     (table.concat
+                      (icollect [k v (pairs* t)]
+                        (string.format
+                         \"%%s %%s\"
+                         (pp k (cons keys (tostring k)))
+                         (pp v (cons keys (tostring k)))))
+                      \" \")
+                     \"))\")
+                 (> len 0)
+                 (.. \"[\"
+                     (table.concat (icollect [i v (ipairs* t)] (pp v (cons keys (tostring i)))) \" \")
+                     \"]\")
+                 \"[]\"))
+           :function
+           (let [err-sym (.. \"err_\" (math.random 100000) \"_\")
+                 keys (table.concat keys \".\")]
+             (tset %s keys t)
+             (..
+              \"(lambda (&rest args)\"
+              \"  (with-current-buffer require-fennel--repl-buffer\"
+              \"    (let* (\" err-sym \"\"
+              \"           (values (fennel-proto-repl-send-message-sync\"
+              \"                    :eval (format \\\"((. \" module \" \\\\\\\"\" keys \"\\\\\\\") %%s)\\\"\"
+              \"                           (mapconcat #'require-fennel--elisp-to-fennel args \\\" \\\"))\"
+              \"                    (lambda (_ msg trace) (setq \" err-sym \" (if trace (format \\\"%%s\n%%s\\\" msg trace) msg)))\"
+              \"                    (lambda (data) (message \\\"%%s\\\" data)) (or require-fennel-timeout most-positive-fixnum))))\"
+              \"      (if \" err-sym \" (error \" err-sym \")\"
+              \"          (thread-last values\"
+              \"            (mapcar (lambda (value) (require-fennel--fennel-to-elisp value nil)))\"
+              \"            require-fennel--handle-multivalue-return)))))\"))
+           :userdata
+           (fennel.view (fennel.view t {:one-line? true}) {:one-line? true})
+           _ (fennel.view t {:one-line? true})))))"
   "Format Fennel tables as elisp data on Fennel side.")
 
 (defun require-fennel--setup-paths (directory)
@@ -299,7 +324,7 @@ USE-HASH-TABLES."
                 ("val" (intern (format "%s%s%s" as separator field)))
                 ("sole-val" (intern (format "%s" as))))))
     `(defconst ,name
-       (with-current-buffer ,require-fennel--repl-buffer
+       (with-current-buffer require-fennel--repl-buffer
          (require-fennel--fennel-to-elisp
           (thread-last
             ,(format "%s.%s" var field)
@@ -443,10 +468,11 @@ argument SEPARATOR specifies what character to use as a separator
 between the AS prefix and Fennel function name.  Keyword argument
 USE-HASH-TABLES forces tables to be returned as Emacs Lisp hash tables
 instead of alists."
-  (let ((as (if as (format "%s" as)
-              (replace-regexp-in-string "[.]" "-" (format "%s" module))))
-        (var (gensym "fennel-elisp-"))
-        (directory default-directory))
+  (let* ((as (if as (format "%s" as)
+               (replace-regexp-in-string "[.]" "-" (format "%s" module))))
+         (var (gensym "fennel-elisp-"))
+         (exports (format "%s-exports" var))
+         (directory default-directory))
     `(prog1 ',(intern as)
        ,@(with-current-buffer (get-buffer-create require-fennel--repl-buffer)
            (unless (and (eq major-mode 'fennel-proto-repl-mode)
@@ -458,10 +484,11 @@ instead of alists."
                (rename-buffer " *fennel-elisp*")))
            (require-fennel--eval "(local fennel (require :fennel))")
            (require-fennel--setup-paths directory)
-           (require-fennel--eval "%s" require-fennel--pprint)
            (fennel-proto-repl-send-message
             nil require-fennel--emacs-integration nil)
            (require-fennel--eval "(var %s (require :%s))" var module)
+           (require-fennel--eval "(var %s {})" exports)
+           (require-fennel--eval require-fennel--pprint exports exports)
            (thread-last
              var
              require-fennel--module-definitions

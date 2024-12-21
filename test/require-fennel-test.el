@@ -106,3 +106,9 @@
   (should (equal 6 (emacs.call)))
   (should (equal 1337 (emacs.eval)))
   (should (equal 42 (emacs.var))))
+
+(ert-deftest function-values-test ()
+  (require-fennel data.function-values :as f :use-hash-maps t)
+  (should (equal 1 (funcall (gethash "fn" f.map))))
+  (should (equal 42 (funcall (aref f.arr 0))))
+  (should (equal 6 (funcall (gethash "fn" (gethash "nested" f.nested-map)) 1 2 3))))
