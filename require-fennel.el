@@ -293,7 +293,7 @@ value."
               \"                    (lambda (data) (message \\\"%%s\\\" data)) (or require-fennel-timeout most-positive-fixnum))))\"
               \"      (if \" err-sym \" (error \" err-sym \")\"
               \"          (thread-last values\"
-              \"            (mapcar (lambda (value) (require-fennel--fennel-to-elisp value nil)))\"
+              \"            (mapcar (lambda (value) (require-fennel--fennel-to-elisp value %s)))\"
               \"            require-fennel--handle-multivalue-return)))))\"))
            :userdata
            (fennel.view (fennel.view t {:one-line? true}) {:one-line? true})
@@ -488,7 +488,7 @@ instead of alists."
             nil require-fennel--emacs-integration nil)
            (require-fennel--eval "(var %s (require :%s))" var module)
            (require-fennel--eval "(var %s {})" exports)
-           (require-fennel--eval require-fennel--pprint exports exports)
+           (require-fennel--eval require-fennel--pprint exports exports use-hash-tables)
            (thread-last
              var
              require-fennel--module-definitions
