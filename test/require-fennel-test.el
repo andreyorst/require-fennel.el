@@ -5,7 +5,8 @@
 (require 'ert)
 
 (ert-deftest load-fennel ()
-  (should (require-fennel fennel)))
+  (should (require-fennel fennel))
+  (should (require-fennel fennel :as fennel-hash :use-hash-tables t)))
 
 (ert-deftest data-conversion-send-test ()
   (require-fennel data.simple :as simple)
@@ -108,7 +109,7 @@
   (should (equal 42 (emacs.var))))
 
 (ert-deftest function-values-test ()
-  (require-fennel data.function-values :as f :use-hash-maps t)
+  (require-fennel data.function-values :as f :use-hash-tables t)
   (should (equal 1 (funcall (gethash "fn" f.map))))
   (should (equal 42 (funcall (aref f.arr 0))))
   (should (equal 6 (funcall (gethash "fn" (gethash "nested" f.nested-map)) 1 2 3))))

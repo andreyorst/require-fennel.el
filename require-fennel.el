@@ -399,20 +399,20 @@ should be converted to ELisp-native hash tables."
                                   [:fun {:sym k}]
                                   [:arguments {:list (fcollect [n 1 (select \"#\" ...)]
                                                   (format-elisp (pick-values 1 (select n ...))))}]])
-                                (. (protocol.receive) :data)))}
+                                (. (protocol.receive protocol.id) :data)))}
                            (setmetatable {}))
                 :var (->> {:__index
                            (fn [_ k]
                              (protocol.message [[:id {:sym protocol.id}]
                                                 [:op {:string :require-fennel/var}]
                                                 [:var {:sym k}]])
-                             (. (protocol.receive) :data))}
+                             (. (protocol.receive protocol.id) :data))}
                           (setmetatable {}))
                 :eval (fn [expr]
                         (protocol.message [[:id {:sym protocol.id}]
                                            [:op {:string :require-fennel/eval}]
                                            [:expr {:sym expr}]])
-                        (. (protocol.receive) :data))})
+                        (. (protocol.receive protocol.id) :data))})
        {:id 1000 :nop \"\"})"
     (replace-regexp-in-string "^ *" "")
     (replace-regexp-in-string "\n" " ")
