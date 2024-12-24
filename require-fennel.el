@@ -4,7 +4,7 @@
 
 ;; Author: Andrey Listopadov
 ;; URL: https://gitlab.com/andreyorst/require-fennel.el
-;; Version: 0.0.4
+;; Version: 0.0.5
 ;; Created: 2024-12-16
 ;; package-requires: ((emacs "28.1"))
 ;; Keywords: languages, tools
@@ -159,7 +159,7 @@ specifying a variable of the same value."
                results))
        (concat "{" (mapconcat #'identity results " ") "}")))
     ((pred null) "nil")
-    ((pred listp)
+    ((or (pred vectorp) (pred listp))
      (concat "[" (mapconcat #'require-fennel--elisp-to-fennel value " ") "]"))
     ((pred keywordp)
      (format "%S" (substring (symbol-name value) 1)))
