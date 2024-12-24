@@ -33,66 +33,49 @@ Then we can load it:
 #+end_src
 
 ** Data conversion
-Functions defined with =require-fennel= understand how to convert to and back from Emacs Lisp data structures.
+Functions defined with =require-fennel.el= understand how to convert to and back from Emacs Lisp data structures.
 Data conversion is recursive, so any nested value should be fine, as long as it follows the specified conversion rules:
 
 *** From Elisp
 Most of Emacs Lisp values are representable in Fennel.
 Currently supported Emacs Lisp types are:
 
-- Vector:
+| Elisp                                              | Fennel                                       |
+|----------------------------------------------------+----------------------------------------------|
+| =[1 2 3]=                                          | =[1 2 3]=                                    |
+| =(1 2 3)=                                          | =[1 2 3]=                                    |
+| =((:foo . 1) (:bar . 2))=                          | ={:foo 1 :bar 2}=                            |
+| =#s(hash-table test equal data ("foo" 1 "bar" 2))= | ={:foo 1 :bar 2}=                            |
+| =:foo=                                             | ="foo"=                                      |
+| ='false=                                           | =false=                                      |
+| ="foo"=                                            | ="foo"=                                      |
+| =#'function=                                       | =(fn [...] (emacs.call.function ...))=       |
+| =(lambda (&rest args) args)=                       | =(fn [...] (emacs.call.anon-fn-gensym ...))= |
 
-  =[1 2 3]= is represented as =[1 2 3]=.
-- List:
-
-  ='(1 2 3)= is represented as =[1 2 3]=.
-- Association list (alist):
-
-  =((:foo . 1) (:bar . 2))= is represented as ={:foo 1 :bar 2}=.
-- Hash table:
-
-  =#s(hash-table test equal data ("foo" 1 "bar" 2))= is represented as ={:foo 1 :bar 2}=.
-  Order of keys is not guaranteed.
-
-- Keyword:
-
-  =:foo= is represented as ="foo"=.
-- Symbol:
-
-  ='false= is represented as =false=
-- String:
-
-  ="foo"= is represented as ="foo"=
+*Note*: anything that returns =t= when passed to =functionp= will be converted to lambda expression in Fennel and invoked with Emacs.
+See [[*Functions][Functions]] for more info.
 
 *** From Fennel
 Fennel values are a bit different from Emacs Lisp, so some conversion has to take place.
 
-- Sequential table:
+| Fennel            | Elisp                                                                                    |
+|-------------------+------------------------------------------------------------------------------------------|
+| =[1 2 3]=         | =[1 2 3]=                                                                                |
+| ={:foo 1 :bar 2}= | =(("foo" . 1) ("bar" . 2))=                                                              |
+| ={:foo 1 :bar 2}= | =#s(hash-table test equal data ("foo" 1 "bar" 2))= if native hash-tables were requested. |
+| =(values 1 2 3)=  | =(1 2 3)=                                                                                |
+| =(fn [...] ...)=  | =(lambda (&rest args) args)=                                                             |
+| =userdata=        | ="#<udata: 0x55b66bd6ac28>"=                                                             |
+| =true=            | =t=                                                                                      |
+| =nil=, =false=    | =nil=                                                                                    |
 
-  =[1 2 3]= is represented as =[1 2 3]=.
-- Hash table:
-
-  ={:foo 1 :bar 2}= is represented as =((:foo . 1) (:bar . 2))=.
-  Order of keys is not guaranteed.
-- Multiple values:
-
-  =(values 1 2 3)= is represented as ='(1 2 3)=.
-- Functions:
-
-  =(fn [])= is represented as ="#<function: 0x55b66b8e9d60>"=
-- Userdata:
-
-  Any userdata is represented as =#<udata: 0x55b66bd6ac28>=
-- =true=:
-
-  =true= is represented as =t=.
-- =nil=, =false=:
-
-  Both are represented as =nil=.
+*Note*: non-top-level functions are converted to =(lambda (&rest args) internal-implementation)= where =internal-implementation= is all the machinery required to call Fennel function from Emacs Lisp.
+Such functions, unlike top-level ones, must be called via =funcall= or =apply=.
+See [[*Functions][Functions]] for more info.
 
 ** Hash tables
 
-*Note*, both multiple values, and hash tables are represented as lists in Emacs Lisp.
+*Note*, both multiple values and hash tables are represented as lists in Emacs Lisp.
 However, a hash table is always a list of cons cells - a pure cons cell will never be returned as a single value.
 
 In cases when multiple values are returned, hash tables are encoded as usual:
@@ -120,3 +103,84 @@ If you prefer native hash tables, use the =:use-hash-tables t= keyword argument 
 #+end_src
 
 This works only on definitions created by this specific call of =require-fennel=.
+
+** Using Emacs Lisp from Fennel
+
+User programs can call into Emacs via the =Elisp= global.
+
+Functions can be called directly via =Elisp.call=:
+
+#+begin_src fennel
+(Elisp.call.emacs-uptime)
+; => "23 minutes, 13 seconds"
+#+end_src
+
+Accessing variables is possible through the =Elisp.var= interface:
+
+#+begin_src fennel
+(print Elisp.var.emacs-version)
+;; => 29.4
+#+end_src
+
+Arbitrary expressions can be evaluated with =Elisp.eval=:
+
+#+begin_src fennel
+(Elisp.eval "(progn (defvar foo-bar 42) foo-bar)")
+;; => 42
+#+end_src
+
+** Functions
+
+It is possible to pass and receive functions to and from Fennel.
+For example, the following module contains a single function =comp=:
+
+#+begin_src fennel
+(fn comp [f g]
+  (fn [...]
+    (f (g ...))))
+#+end_src
+
+Passing two functions to =comp= will return a new function, which is a composition of the passed functions.
+
+=require-fennel.el= can understand function values:
+
+#+begin_src emacs-lisp
+(require-fennel test.data.comp :as comp)
+
+(funcall (comp 'string.upper 'string.reverse) "foo")
+; => "OOF"
+#+end_src
+
+Here, =comp= receives two symbols, which is a shorthand for passing values as is.
+Thus, the resulting function is a composition: =(fn [...] (string.upper (string.reverse ...)))=.
+When a raw function value is passed back from Fennel, it is converted to an Emacs Lisp =lambda=.
+Such lambdas can be called with =funcall= or =apply=.
+
+A reverse mechanism is also possible.
+For example, Fennel doesn't have a =string-trim= equivalent built-in.
+It is possible to pass it to Fennel:
+
+#+begin_src emacs-lisp
+(funcall (comp 'string.upper #'string-trim) " foo ")
+; => "FOO"
+#+end_src
+
+Alternatively, a =lambda= can be passed:
+
+#+begin_src emacs-lisp
+(funcall
+ (comp #'capitalize (lambda (s) (string-trim-right s "\n.*")))
+ "foo\nbar")
+; => "Foo"
+#+end_src
+
+*Note*, =require-fennel.el= doesn't convert functions from ELisp to Fennel or vice versa.
+Instead, a wrapper is created on the respecting side.
+
+When an Emacs Lisp function is passed to Fennel, it is essentially wrapped into Fennel lambda that uses =Elisp.call= to call the function.
+If a lambda is passed, it is bound to a symbol, and again called through =Elisp.call=.
+
+When a Fennel function is passed back to Emacs Lisp, a =lambda= wrapper is returned.
+This lambda calls some =require-fennel.el= functions to evaluate the Fennel code.
+
+Thus, it is not recommended to pass functions to Fennel, receive them back, pass them again, and so on, as multiple wrappers would be created.
