@@ -113,3 +113,11 @@
   (should (equal 1 (funcall (gethash "fn" f.map))))
   (should (equal 42 (funcall (aref f.arr 0))))
   (should (equal 6 (funcall (gethash "fn" (gethash "nested" f.nested-map)) 1 2 3))))
+
+(ert-deftest passing-functions-test ()
+  (require-fennel data.comp :as comp)
+  (should (equal "Foo" (funcall (comp #'capitalize #'string-trim) " foo ")))
+  (should (equal "Bar" (funcall (comp #'capitalize (lambda (s) (string-trim-right s "\n.*"))) "bAR\nbaz")))
+  (require-fennel data.pcall :as pcall)
+  (should-not (car (pcall (lambda () (error "error")))))
+  (should (car (pcall (lambda () "ok")))))
