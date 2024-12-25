@@ -533,6 +533,7 @@ instead of alists."
            (require-fennel--setup-paths directory)
            (fennel-proto-repl-send-message
             nil require-fennel--emacs-integration nil)
+           (require-fennel--eval "(tset package.loaded :%s nil)" module)
            (require-fennel--eval "(var %s (require :%s))" var module)
            (require-fennel--eval "(var %s {})" exports)
            (require-fennel--eval require-fennel--pprint exports exports use-hash-tables)

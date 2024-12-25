@@ -26,6 +26,9 @@
   (should (equal ["a"] (simple.identity [:a])))
   (should (equal ["a" "b"] (simple.identity [:a :b])))
   (should (equal ["a" "b" "c"] (simple.identity [:a :b :c])))
+  (should (equal ["a"] (simple.identity ["a"])))
+  (should (equal ["a" "b"] (simple.identity ["a" "b"])))
+  (should (equal ["a" "b" "c"] (simple.identity ["a" "b" "c"])))
 
   (should-not (simple.nothing 2))
   (should (equal '(2 3) (simple.rest 1 2 3)))
